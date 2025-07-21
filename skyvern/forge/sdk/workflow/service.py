@@ -1804,26 +1804,50 @@ class WorkflowService:
                 include_action_history_in_verification=block_yaml.include_action_history_in_verification,
             )
         elif block_yaml.block_type == BlockType.FOR_LOOP:
+            # Detect if the loop input is a prompt (not a parameter key)
             loop_blocks = [
                 await WorkflowService.block_yaml_to_block(workflow, loop_block, parameters)
                 for loop_block in block_yaml.loop_blocks
             ]
 
             loop_over_parameter: Parameter | None = None
-            if block_yaml.loop_over_parameter_key:
-                loop_over_parameter = parameters[block_yaml.loop_over_parameter_key]
+            prompt = getattr(block_yaml, 'prompt', None)
+            json_schema = getattr(block_yaml, 'json_schema', None)
 
-            if block_yaml.loop_variable_reference:
-                # it's backaward compatible with jinja style parameter and context paramter
-                # we trim the format like {{ loop_key }} into loop_key to initialize the context parater,
-                # otherwise it might break the context parameter initialization chain, blow up the worklofw parameters
-                # TODO: consider remove this if we totally give up context parameter
-                trimmed_key = block_yaml.loop_variable_reference.strip(" {}")
-                if trimmed_key in parameters:
-                    loop_over_parameter = parameters[trimmed_key]
-
-            if loop_over_parameter is None and not block_yaml.loop_variable_reference:
-                raise Exception("Loop value parameter is required for for loop block")
+            # If prompt is set, create a hidden TextPromptBlock and use its output as the loop_over parameter
+            if prompt:
+                # Create a unique label for the hidden prompt block
+                prompt_label = f"{block_yaml.label}__prompt"
+                # Create output parameter for the prompt block
+                prompt_output_key = f"{prompt_label}_output"
+                if prompt_output_key not in parameters:
+                    parameters[prompt_output_key] = await WorkflowService.create_output_parameter_for_block(
+                        workflow.workflow_id,
+                        type('TextPromptBlockYAML', (), {'label': prompt_label})
+                    )
+                # Create the TextPromptBlock
+                prompt_block = TextPromptBlock(
+                    label=prompt_label,
+                    llm_key=getattr(block_yaml, 'llm_key', None) or getattr(block_yaml, 'DEFAULT_TEXT_PROMPT_LLM_KEY', None),
+                    prompt=prompt,
+                    parameters=[],
+                    json_schema=json_schema,
+                    output_parameter=parameters[prompt_output_key],
+                    continue_on_failure=False,
+                    model=getattr(block_yaml, 'model', None),
+                )
+                # Insert the prompt block as the first block in the loop (optional: could be before the loop)
+                # Here, we do NOT add it to loop_blocks, but use its output as the loop_over
+                loop_over_parameter = parameters[prompt_output_key]
+            else:
+                if block_yaml.loop_over_parameter_key:
+                    loop_over_parameter = parameters[block_yaml.loop_over_parameter_key]
+                if block_yaml.loop_variable_reference:
+                    trimmed_key = block_yaml.loop_variable_reference.strip(" {}")
+                    if trimmed_key in parameters:
+                        loop_over_parameter = parameters[trimmed_key]
+                if loop_over_parameter is None and not block_yaml.loop_variable_reference:
+                    raise Exception("Loop value parameter is required for for loop block")
 
             return ForLoopBlock(
                 label=block_yaml.label,
@@ -1833,6 +1857,8 @@ class WorkflowService:
                 output_parameter=output_parameter,
                 continue_on_failure=block_yaml.continue_on_failure,
                 complete_if_empty=block_yaml.complete_if_empty,
+                prompt=prompt,
+                json_schema=json_schema,
             )
         elif block_yaml.block_type == BlockType.CODE:
             return CodeBlock(

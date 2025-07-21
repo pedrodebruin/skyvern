@@ -165,6 +165,8 @@ class ForLoopBlockYAML(BlockYAML):
     loop_over_parameter_key: str = ""
     loop_variable_reference: str | None = None
     complete_if_empty: bool = False
+    prompt: str | None = None
+    json_schema: dict[str, Any] | None = None
 
 
 class CodeBlockYAML(BlockYAML):

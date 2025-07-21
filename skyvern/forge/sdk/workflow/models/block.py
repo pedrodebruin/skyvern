@@ -876,6 +876,8 @@ class ForLoopBlock(Block):
     loop_over: PARAMETER_TYPE | None = None
     loop_variable_reference: str | None = None
     complete_if_empty: bool = False
+    prompt: str | None = None
+    json_schema: dict[str, Any] | None = None
 
     def get_all_parameters(
         self,
