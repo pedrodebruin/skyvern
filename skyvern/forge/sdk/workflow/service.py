@@ -1814,6 +1814,32 @@ class WorkflowService:
             prompt = getattr(block_yaml, 'prompt', None)
             json_schema = getattr(block_yaml, 'json_schema', None)
 
+            # --- Begin new logic: try variable reference, fallback to prompt ---
+            # Determine the loop value field (UI may set loop_variable_reference or loop_over_parameter_key)
+            loop_value = getattr(block_yaml, 'loop_variable_reference', None) or getattr(block_yaml, 'loop_over_parameter_key', None) or None
+            fallback_to_prompt = False
+            if loop_value and not prompt:
+                trimmed_key = loop_value.strip(" {}")
+                try:
+                    # Try to resolve as variable reference (simulate old logic)
+                    if trimmed_key in parameters:
+                        loop_over_parameter = parameters[trimmed_key]
+                        prompt = None
+                    else:
+                        # Try to render as a Jinja template (dry run)
+                        from jinja2.sandbox import SandboxedEnvironment
+                        jinja_env = SandboxedEnvironment()
+                        jinja_env.from_string("{{ " + trimmed_key + " }}")
+                        # If no error, treat as variable reference
+                        loop_over_parameter = parameters.get(trimmed_key)
+                        prompt = None
+                except Exception:
+                    # If any error, treat as prompt
+                    prompt = loop_value
+                    loop_over_parameter = None
+                    fallback_to_prompt = True
+            # --- End new logic ---
+
             # If prompt is set, create a hidden TextPromptBlock and use its output as the loop_over parameter
             if prompt:
                 # Create a unique label for the hidden prompt block
@@ -1839,6 +1865,9 @@ class WorkflowService:
                 # Insert the prompt block as the first block in the loop (optional: could be before the loop)
                 # Here, we do NOT add it to loop_blocks, but use its output as the loop_over
                 loop_over_parameter = parameters[prompt_output_key]
+                # If we fell back to prompt, clear loop_variable_reference so downstream logic doesn't try to use it
+                if fallback_to_prompt:
+                    block_yaml.loop_variable_reference = None
             else:
                 if block_yaml.loop_over_parameter_key:
                     loop_over_parameter = parameters[block_yaml.loop_over_parameter_key]
