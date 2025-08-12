@@ -7,6 +7,8 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.prompt import Confirm
 
+from skyvern.utils import detect_os
+
 from .console import console
 
 
@@ -57,12 +59,22 @@ def is_docker_running() -> bool:
 
 
 def is_postgres_running_in_docker() -> bool:
-    _, code = run_command("docker ps | grep -q postgresql-container", check=False)
+    host_system = detect_os()
+    if host_system == "windows":
+        # Windows-specific Docker command
+        _, code = run_command('docker ps --format "table {{.Names}}" | findstr postgresql-container', check=False)
+    else:
+        _, code = run_command("docker ps | grep -q postgresql-container", check=False)
     return code == 0
 
 
 def is_postgres_container_exists() -> bool:
-    _, code = run_command("docker ps -a | grep -q postgresql-container", check=False)
+    host_system = detect_os()
+    if host_system == "windows":
+        # Windows-specific Docker command
+        _, code = run_command('docker ps -a --format "table {{.Names}}" | findstr postgresql-container', check=False)
+    else:
+        _, code = run_command("docker ps -a | grep -q postgresql-container", check=False)
     return code == 0
 
 
@@ -127,9 +139,16 @@ def setup_postgresql(no_postgres: bool = False) -> None:
         console.print("✅ [green]PostgreSQL container ready.[/green]")
 
     with console.status("[bold green]Checking database user...[/bold green]"):
-        _, code = run_command(
-            'docker exec postgresql-container psql -U postgres -c "\\du" | grep -q skyvern', check=False
-        )
+        host_system = detect_os()
+        if host_system == "windows":
+            # Windows-specific Docker command
+            _, code = run_command(
+                'docker exec postgresql-container psql -U postgres -c "\\du" | findstr skyvern', check=False
+            )
+        else:
+            _, code = run_command(
+                'docker exec postgresql-container psql -U postgres -c "\\du" | grep -q skyvern', check=False
+            )
         if code == 0:
             console.print("✅ [green]Database user exists.[/green]")
         else:
@@ -138,10 +157,17 @@ def setup_postgresql(no_postgres: bool = False) -> None:
             console.print("✅ [green]Database user created.[/green]")
 
     with console.status("[bold green]Checking database...[/bold green]"):
-        _, code = run_command(
-            "docker exec postgresql-container psql -U postgres -lqt | cut -d | -f 1 | grep -qw skyvern",
-            check=False,
-        )
+        if host_system == "windows":
+            # Windows-specific Docker command
+            _, code = run_command(
+                'docker exec postgresql-container psql -U postgres -lqt | findstr skyvern',
+                check=False,
+            )
+        else:
+            _, code = run_command(
+                "docker exec postgresql-container psql -U postgres -lqt | cut -d | -f 1 | grep -qw skyvern",
+                check=False,
+            )
         if code == 0:
             console.print("✅ [green]Database exists.[/green]")
         else:

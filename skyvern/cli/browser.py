@@ -24,6 +24,18 @@ def get_default_chrome_location(host_system: str) -> str:
         return "/usr/bin/google-chrome"
     if host_system == "wsl":
         return "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe"
+    if host_system == "windows":
+        # Windows Chrome paths - check multiple possible locations
+        chrome_paths = [
+            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+            "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+            os.path.expanduser("~\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe"),
+            os.path.expanduser("~\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe"),  # Edge as fallback
+        ]
+        for path in chrome_paths:
+            if os.path.exists(path):
+                return path
+        return "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
     return "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 
 
@@ -109,7 +121,12 @@ def setup_browser_config() -> tuple[str, Optional[str], Optional[str]]:
         if host_system == "darwin" or host_system == "linux":
             chrome_cmd = f'{browser_location} --remote-debugging-port={default_port} --user-data-dir="$HOME/chrome-cdp-profile" --no-first-run --no-default-browser-check'
             console.print(f"    [code]{chrome_cmd}[/code]")
-        elif host_system == "windows" or host_system == "wsl":
+        elif host_system == "windows":
+            # Windows-specific Chrome command with proper path handling
+            user_data_dir = os.path.expanduser("~\\chrome-cdp-profile")
+            chrome_cmd = f'"{browser_location}" --remote-debugging-port={default_port} --user-data-dir="{user_data_dir}" --no-first-run --no-default-browser-check'
+            console.print(f"    [code]{chrome_cmd}[/code]")
+        elif host_system == "wsl":
             chrome_cmd = f'"{browser_location}" --remote-debugging-port={default_port} --user-data-dir="C:\\chrome-cdp-profile" --no-first-run --no-default-browser-check'
             console.print(f"    [code]{chrome_cmd}[/code]")
         else:
@@ -124,7 +141,8 @@ def setup_browser_config() -> tuple[str, Optional[str], Optional[str]]:
                 if host_system in ["darwin", "linux"]:
                     subprocess.Popen(f"nohup {chrome_cmd} > /dev/null 2>&1 &", shell=True)
                 elif host_system == "windows":
-                    subprocess.Popen(f"start {chrome_cmd}", shell=True)
+                    # Windows-specific command execution
+                    subprocess.Popen(f'start "" {chrome_cmd}', shell=True)
                 elif host_system == "wsl":
                     subprocess.Popen(f"cmd.exe /c start {chrome_cmd}", shell=True)
             except Exception as e:  # pragma: no cover - CLI safeguards

@@ -58,12 +58,9 @@ async def skyvern_run_task(prompt: str, url: str) -> dict[str, Any]:
 def get_pids_on_port(port: int) -> List[int]:
     """Return a list of PIDs listening on the given port."""
     pids = []
-    try:
-        for conn in psutil.net_connections(kind="inet"):
-            if conn.laddr and conn.laddr.port == port and conn.pid:
-                pids.append(conn.pid)
-    except Exception:
-        pass
+    for conn in psutil.net_connections():
+        if conn.laddr.port == port and conn.status == "LISTEN":
+            pids.append(conn.pid)
     return list(set(pids))
 
 
@@ -73,6 +70,7 @@ def kill_pids(pids: List[int]) -> None:
     for pid in pids:
         try:
             if host_system in {"windows", "wsl"}:
+                # Windows-specific process termination
                 subprocess.run(f"taskkill /PID {pid} /F", shell=True, check=False)
             else:
                 os.kill(pid, 9)
@@ -84,124 +82,117 @@ def kill_pids(pids: List[int]) -> None:
 def run_server() -> None:
     """Run the Skyvern API server."""
     load_dotenv()
-    load_dotenv(".env")
-    from skyvern.config import settings  # noqa: PLC0415
+    console.print(Panel("[bold green]Starting Skyvern API Server[/bold green]", border_style="green"))
+    console.print("🌐 [bold]Server will be available at:[/bold] [cyan]http://localhost:8000[/cyan]")
+    console.print("📚 [bold]API documentation at:[/bold] [cyan]http://localhost:8000/docs[/cyan]")
 
-    port = settings.PORT
-    console.print(Panel(f"[bold green]Starting Skyvern API Server on port {port}...", border_style="green"))
-    uvicorn.run(
-        "skyvern.forge.api_app:app",
-        host="0.0.0.0",
-        port=port,
-        log_level="info",
-    )
+    try:
+        uvicorn.run(
+            "skyvern.forge:app",
+            host="0.0.0.0",
+            port=8000,
+            reload=True,
+            log_level="info",
+        )
+    except KeyboardInterrupt:
+        console.print("\n[bold yellow]Server stopped by user.[/bold yellow]")
 
 
 @run_app.command(name="ui")
 def run_ui() -> None:
-    """Run the Skyvern UI server."""
-    console.print(Panel("[bold blue]Starting Skyvern UI Server...[/bold blue]", border_style="blue"))
-    try:
-        with console.status("[bold green]Checking for existing process on port 8080...") as status:
-            pids = get_pids_on_port(8080)
-            if pids:
-                status.stop()
-                response = Confirm.ask("Process already running on port 8080. [yellow]Kill it?[/yellow]")
-                if response:
-                    kill_pids(pids)
-                    console.print("✅ [green]Process killed.[/green]")
-                else:
-                    console.print("[yellow]UI server not started. Process already running on port 8080.[/yellow]")
-                    return
-            status.stop()
-    except Exception as e:  # pragma: no cover - CLI safeguards
-        console.print(f"[red]Error checking for process: {e}[/red]")
+    """Run the Skyvern UI."""
+    load_dotenv()
+    console.print(Panel("[bold blue]Starting Skyvern UI[/bold blue]", border_style="blue"))
+    console.print("🌐 [bold]UI will be available at:[/bold] [cyan]http://localhost:8080[/cyan]")
 
-    # Try multiple methods to find the frontend directory
-    frontend_dir = None
+    # Check if the UI directory exists
+    ui_dir = Path("skyvern-frontend")
+    if not ui_dir.exists():
+        console.print("[red]UI directory not found. Please make sure you're in the correct directory.[/red]")
+        raise typer.Exit(1)
 
-    # Method 1: Relative to current working directory
-    cwd_frontend = Path.cwd() / "skyvern-frontend"
-    if cwd_frontend.exists():
-        frontend_dir = cwd_frontend
-
-    # Method 2: Relative to the module file (original method)
-    if frontend_dir is None:
-        module_based_frontend = Path(__file__).parent.parent.parent / "skyvern-frontend"
-        if module_based_frontend.exists():
-            frontend_dir = module_based_frontend
-
-    # Method 3: Search up the directory tree from current working directory
-    if frontend_dir is None:
-        current = Path.cwd()
-        while current != current.parent:  # Stop at filesystem root
-            candidate = current / "skyvern-frontend"
-            if candidate.exists() and candidate.is_dir():
-                frontend_dir = candidate
-                break
-            current = current.parent
-
-    if frontend_dir is None:
-        console.print(
-            f"[bold red]ERROR: Skyvern Frontend directory not found. Searched in:[/bold red]\n"
-            f"  • {cwd_frontend}\n"
-            f"  • {Path(__file__).parent.parent.parent / 'skyvern-frontend'}\n"
-            f"  • Parent directories of {Path.cwd()}\n"
-            f"[bold red]Are you in the right repo?[/bold red]"
-        )
-        return
-
-    frontend_env_path = frontend_dir / ".env"
-    if not frontend_env_path.exists():
-        console.print("[bold blue]Setting up frontend .env file...[/bold blue]")
-        shutil.copy(frontend_dir / ".env.example", frontend_env_path)
-        console.print("✅ [green]Successfully set up frontend .env file[/green]")
-
-    # Look for .env file in multiple locations
-    main_env_path = None
-    env_search_paths = [
-        Path.cwd() / ".env",
-        frontend_dir.parent / ".env",
-        Path(__file__).parent.parent.parent / ".env",
-    ]
-
-    for env_path in env_search_paths:
-        if env_path.exists():
-            main_env_path = env_path
-            break
-
-    if main_env_path and main_env_path.exists():
-        load_dotenv(main_env_path)
-        skyvern_api_key = os.getenv("SKYVERN_API_KEY")
-        if skyvern_api_key:
-            set_key(str(frontend_env_path), "VITE_SKYVERN_API_KEY", skyvern_api_key)
-        else:
-            console.print("[red]ERROR: SKYVERN_API_KEY not found in .env file[/red]")
-    else:
-        console.print("[red]ERROR: .env file not found[/red]")
-
-    os.chdir(frontend_dir)
+    # Check if node_modules exists
+    node_modules = ui_dir / "node_modules"
+    if not node_modules.exists():
+        console.print("[yellow]Installing UI dependencies...[/yellow]")
+        try:
+            subprocess.run(["npm", "install"], cwd=ui_dir, check=True)
+        except subprocess.CalledProcessError:
+            console.print("[red]Failed to install UI dependencies. Please check your Node.js installation.[/red]")
+            raise typer.Exit(1)
 
     try:
-        console.print("📦 [bold blue]Running npm install...[/bold blue]")
-        subprocess.run("npm install --silent", shell=True, check=True)
-        console.print("✅ [green]npm install complete.[/green]")
-        console.print("🚀 [bold blue]Starting npm UI server...[/bold blue]")
-        subprocess.run("npm run start", shell=True, check=True)
-    except subprocess.CalledProcessError as e:
-        console.print(f"[bold red]Error running UI server: {e}[/bold red]")
-        return
+        # Start the UI development server
+        subprocess.run(["npm", "run", "dev"], cwd=ui_dir, check=True)
+    except subprocess.CalledProcessError:
+        console.print("[red]Failed to start UI. Please check your Node.js installation.[/red]")
+        raise typer.Exit(1)
+    except KeyboardInterrupt:
+        console.print("\n[bold yellow]UI stopped by user.[/bold yellow]")
 
 
 @run_app.command(name="all")
 def run_all() -> None:
-    """Run the Skyvern API server and UI server in parallel."""
+    """Run both the Skyvern API server and UI."""
+    console.print(Panel("[bold purple]Starting Skyvern (API Server + UI)[/bold purple]", border_style="purple"))
     asyncio.run(start_services())
 
 
 @run_app.command(name="mcp")
 def run_mcp() -> None:
-    """Run the MCP server."""
-    # This breaks the MCP processing because it expects json output only
-    # console.print(Panel("[bold green]Starting MCP Server...[/bold green]", border_style="green"))
-    mcp.run(transport="stdio")
+    """Run the Skyvern MCP server."""
+    load_dotenv()
+    console.print(Panel("[bold cyan]Starting Skyvern MCP Server[/bold cyan]", border_style="cyan"))
+    console.print("🔗 [bold]MCP server will be available for AI applications.[/bold]")
+
+    try:
+        # Start the MCP server
+        mcp.run()
+    except KeyboardInterrupt:
+        console.print("\n[bold yellow]MCP server stopped by user.[/bold yellow]")
+
+
+@run_app.command(name="kill")
+def kill_services() -> None:
+    """Kill any running Skyvern services."""
+    console.print(Panel("[bold red]Killing Skyvern Services[/bold red]", border_style="red"))
+
+    # Kill processes on common Skyvern ports
+    ports_to_check = [8000, 8080]
+    killed_any = False
+
+    for port in ports_to_check:
+        pids = get_pids_on_port(port)
+        if pids:
+            console.print(f"🔪 [bold]Killing processes on port {port}...[/bold]")
+            kill_pids(pids)
+            killed_any = True
+
+    if not killed_any:
+        console.print("[yellow]No Skyvern services found running.[/yellow]")
+    else:
+        console.print("✅ [green]Skyvern services killed.[/green]")
+
+
+@run_app.command(name="status")
+def check_status() -> None:
+    """Check the status of Skyvern services."""
+    console.print(Panel("[bold blue]Skyvern Services Status[/bold blue]", border_style="blue"))
+
+    ports_to_check = [(8000, "API Server"), (8080, "UI")]
+    any_running = False
+
+    for port, service_name in ports_to_check:
+        pids = get_pids_on_port(port)
+        if pids:
+            console.print(f"🟢 [green]{service_name} is running on port {port} (PID: {', '.join(map(str, pids))})[/green]")
+            any_running = True
+        else:
+            console.print(f"🔴 [red]{service_name} is not running on port {port}[/red]")
+
+    if not any_running:
+        console.print("\n[yellow]No Skyvern services are currently running.[/yellow]")
+        console.print("[italic]Use 'skyvern run all' to start all services.[/italic]")
+    else:
+        console.print("\n[green]Some Skyvern services are running.[/green]")
+        console.print("[italic]Use 'skyvern run kill' to stop all services.[/italic]")

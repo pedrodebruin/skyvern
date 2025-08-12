@@ -56,6 +56,8 @@ pip install skyvern
 skyvern quickstart
 ```
 
+**Windows Users**: If you encounter issues on Windows, please see the [Windows Development Setup Guide](WINDOWS_DEVELOPMENT_SETUP.md) for detailed instructions and troubleshooting.
+
 ### 3. Run task
 
 #### UI (Recommended)
@@ -402,6 +404,23 @@ skyvern quickstart contributors
 
 1. Navigate to `http://localhost:8080` in your browser to start using the UI
    *The Skyvern CLI supports Windows, WSL, macOS, and Linux environments.*
+
+### Windows 11 Support
+
+Skyvern now includes improved Windows 11 support with the following enhancements:
+
+- **Better Chrome Detection**: Automatically detects Chrome in common Windows installation locations
+- **Windows-Specific Commands**: Uses appropriate Windows command syntax for subprocess operations
+- **Improved Path Handling**: Properly handles Windows file paths and environment variables
+- **Docker Integration**: Better Docker command execution on Windows
+- **MCP Configuration**: Windows-specific paths for AI application configurations
+
+To test Windows support, run:
+```powershell
+python scripts/test_windows_support.py
+```
+
+For detailed Windows setup instructions, see [Windows Development Setup Guide](WINDOWS_DEVELOPMENT_SETUP.md).
 
 # Documentation
 
